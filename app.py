@@ -319,4 +319,4 @@ else:
 
     # --- ENTERPRISE FOOTER ---
     st.write("---")
-    st.markdown("<p style='text-align: center; color: gray; font-size: 12px;'>© 2026 AFCA Clinical Systems | VISTAS Medical Software Division | Restricted Access</p>", unsafe_allow_html=True))
+    st.markdown("<p style='text-align: center; color: gray; font-size: 12px;'>© 2026 AFCA Clinical Systems | VISTAS Medical Software Division | Restricted Access</p>", unsafe_allow_html=True)
