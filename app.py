@@ -11,10 +11,14 @@ from fpdf import FPDF
 import tempfile
 import os
 import urllib.request
+import pandas as pd
+from datetime import datetime
+
+# --- 1. App Configuration ---
+st.set_page_config(page_title="AFCA AI Dashboard", layout="wide")
 
 # --- Model Download Logic ---
 model_file_name = "afca_unet_model.pth"
-# Paste your copied GitHub Release link inside the quotes below!
 model_url = "https://github.com/eswarprajapat/Auto-Foliculometry-Clinical-Assistant-AFCA-/releases/download/v1.0/afca_unet_model.pth"
 
 if not os.path.exists(model_file_name):
@@ -22,19 +26,26 @@ if not os.path.exists(model_file_name):
         urllib.request.urlretrieve(model_url, model_file_name)
         st.success("Model downloaded successfully!")
 
-# --- 1. App Configuration ---
-st.set_page_config(page_title="AFCA AI Dashboard", layout="wide")
-
 # --- 2. Database Backend Setup ---
-def create_usertable():
-    conn = sqlite3.connect('afca_users.db')
+def init_db():
+    conn = sqlite3.connect('afca_clinical_system.db')
     c = conn.cursor()
-    # UNIQUE ensures no two doctors can register the same ID
+    # Clinician Table
     c.execute('CREATE TABLE IF NOT EXISTS userstable(username TEXT UNIQUE, password TEXT)')
+    # Patient EHR Table
+    c.execute('''CREATE TABLE IF NOT EXISTS patient_records(
+                    record_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    patient_id TEXT,
+                    doctor_id TEXT,
+                    scan_date TEXT,
+                    total_follicles INTEGER,
+                    mature_follicles INTEGER,
+                    clinical_status TEXT
+                )''')
     conn.commit()
 
 def add_userdata(username, password):
-    conn = sqlite3.connect('afca_users.db')
+    conn = sqlite3.connect('afca_clinical_system.db')
     c = conn.cursor()
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
     try:
@@ -42,17 +53,30 @@ def add_userdata(username, password):
         conn.commit()
         return True
     except sqlite3.IntegrityError:
-        return False # Triggers if username already exists
+        return False
 
 def login_user(username, password):
-    conn = sqlite3.connect('afca_users.db')
+    conn = sqlite3.connect('afca_clinical_system.db')
     c = conn.cursor()
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
     c.execute('SELECT * FROM userstable WHERE username =? AND password = ?', (username, hashed_pw))
     data = c.fetchall()
     return data
 
-create_usertable() # Initialize database on startup
+def add_patient_record(patient_id, doctor_id, total, mature, status):
+    conn = sqlite3.connect('afca_clinical_system.db')
+    c = conn.cursor()
+    scan_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+    c.execute('INSERT INTO patient_records(patient_id, doctor_id, scan_date, total_follicles, mature_follicles, clinical_status) VALUES (?,?,?,?,?,?)',
+              (patient_id, doctor_id, scan_date, total, mature, status))
+    conn.commit()
+
+def get_all_records():
+    conn = sqlite3.connect('afca_clinical_system.db')
+    df = pd.read_sql_query("SELECT patient_id AS 'Patient ID', doctor_id AS 'Attending Physician', scan_date AS 'Scan Date', total_follicles AS 'Total Follicles', mature_follicles AS 'Mature (>=18mm)', clinical_status AS 'Status' FROM patient_records ORDER BY record_id DESC", conn)
+    return df
+
+init_db() # Initialize both tables on startup
 
 # --- 3. Session State Management ---
 if 'logged_in' not in st.session_state:
@@ -62,7 +86,6 @@ if 'show_signup' not in st.session_state:
 
 # --- 4. Authentication Portal (Login / Sign Up) ---
 if not st.session_state['logged_in']:
-    # Hide sidebar on login screen
     st.markdown("""
         <style>
             [data-testid="collapsedControl"] {display: none;}
@@ -77,11 +100,10 @@ if not st.session_state['logged_in']:
         st.markdown("<h4 style='text-align: center; color: gray;'>Clinical Decision Support System</h4>", unsafe_allow_html=True)
         st.write("---")
 
-        # --- SIGN UP VIEW ---
         if st.session_state['show_signup']:
             with st.form("signup_form"):
                 st.subheader("Create Clinician Account")
-                new_user = st.text_input("New Clinician ID / Username")
+                new_user = st.text_input("New Clinician ID")
                 new_pass = st.text_input("New Password", type='password')
                 submit_signup = st.form_submit_button("Register Account")
 
@@ -93,7 +115,7 @@ if not st.session_state['logged_in']:
                         st.session_state['show_signup'] = False
                         st.rerun()
                     else:
-                        st.error("Clinician ID already exists. Please choose another.")
+                        st.error("Clinician ID already exists.")
                 else:
                     st.warning("Please fill out both fields.")
             
@@ -101,7 +123,6 @@ if not st.session_state['logged_in']:
                 st.session_state['show_signup'] = False
                 st.rerun()
 
-        # --- LOGIN VIEW ---
         else:
             with st.form("login_form"):
                 st.subheader("Physician Login")
@@ -116,7 +137,7 @@ if not st.session_state['logged_in']:
                     st.session_state['username'] = username
                     st.rerun()
                 else:
-                    st.error("Invalid Clinician ID or Password. Please try again.")
+                    st.error("Invalid Clinician ID or Password.")
             
             st.write("Don't have an account?")
             if st.button("Create New Account"):
@@ -124,27 +145,30 @@ if not st.session_state['logged_in']:
                 st.rerun()
 
 # --- 5. Main Application Dashboard ---
-# --- 5. Main Application Dashboard ---
 else:
-    # --- CUSTOM HOSPITAL BRANDING (SIDEBAR) ---
+    # Sidebar features
     st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2966/2966327.png", width=100) 
     st.sidebar.markdown(f"**Attending Physician:**<br>Dr. {st.session_state['username']}", unsafe_allow_html=True)
     st.sidebar.write("---")
     st.sidebar.caption("System Status: Online 🟢")
-    st.sidebar.caption("PACS Connection: Secure 🔒")
+    st.sidebar.caption("EHR Database: Connected 💾")
     st.sidebar.write("---")
     if st.sidebar.button("Logout", use_container_width=True):
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # Dashboard Header
     st.title("Auto-Foliculometry Clinical Assistant (AFCA)")
     
-    # --- MULTI-TAB INTERFACE ---
-    tab1, tab2, tab3 = st.tabs(["🩺 AI Biometry Scanner", "🗄️ Patient Database", "⚙️ System Settings"])
+    # MULTI-TAB INTERFACE
+    tab1, tab2, tab3 = st.tabs(["🩺 AI Biometry Scanner", "🗄️ Patient EHR Database", "⚙️ System Settings"])
 
+    # --- TAB 1: SCANNER ---
     with tab1:
-        st.write("Upload a transvaginal ultrasound scan for instant biometry analysis.")
+        col_id, col_upload = st.columns([1, 2])
+        with col_id:
+            patient_id_input = st.text_input("Enter Patient ID:", value="P-1001")
+        with col_upload:
+            uploaded_file = st.file_uploader("Upload Ultrasound Image (.jpg, .png)", type=["jpg", "png", "jpeg"])
 
         @st.cache_resource
         def load_model():
@@ -156,8 +180,6 @@ else:
 
         model, device = load_model()
         PIXEL_TO_MM = 0.25 
-
-        uploaded_file = st.file_uploader("Upload Ultrasound Image (.jpg, .png)", type=["jpg", "png", "jpeg"])
 
         if uploaded_file is not None:
             image = Image.open(uploaded_file).convert('RGB')
@@ -218,70 +240,83 @@ else:
                 
             st.success(f"**Clinical Summary:** Detected {total_count} total follicles. {mature_count} follicles are >= 18mm.")
 
-            # --- EXPORT REPORTS ---
+            # --- EHR SAVE & EXPORT ---
             st.write("---")
-            st.subheader("Export Clinical Data")
+            st.subheader("Patient Management")
             
+            clinical_status = "Ready for Trigger" if mature_count > 0 else "Active Stimulation"
             sizes_list.sort(reverse=True) 
             
-            # 1. PDF Generation
-            def create_pdf():
-                pdf = FPDF()
-                pdf.add_page()
-                
-                pdf.set_font("Arial", 'B', 16)
-                pdf.cell(200, 10, txt="AFCA - Automated Clinical Ultrasound Report", ln=True, align='C')
-                pdf.line(10, 20, 200, 20)
-                pdf.ln(10)
-                
-                pdf.set_font("Arial", size=12)
-                pdf.cell(200, 8, txt=f"Attending Physician: Dr. {st.session_state['username']}", ln=True)
-                pdf.cell(200, 8, txt="Patient ID: P-84920", ln=True)
-                pdf.cell(200, 8, txt="Scan Type: Transvaginal Pelvic Ultrasound", ln=True)
-                pdf.ln(10)
-                
-                pdf.set_font("Arial", 'B', 14)
-                pdf.cell(200, 10, txt="AI Biometry Results:", ln=True)
-                pdf.set_font("Arial", size=12)
-                pdf.cell(200, 8, txt=f"Total Fluid Pockets Detected: {total_count}", ln=True)
-                pdf.cell(200, 8, txt=f"Mature Follicles (Ready for Trigger): {mature_count}", ln=True)
-                pdf.ln(5)
-                
-                pdf.cell(200, 8, txt="Measurements (Largest to Smallest):", ln=True)
-                for i, size in enumerate(sizes_list):
-                    status = "MATURE" if size >= 18.0 else "Growing"
-                    pdf.cell(200, 8, txt=f"  - Follicle {i+1}: {size} mm [{status}]", ln=True)
-                
-                temp_pdf_path = tempfile.mktemp(suffix=".pdf")
-                pdf.output(temp_pdf_path)
-                return temp_pdf_path
-
-            pdf_file_path = create_pdf()
+            col_save, col_pdf, col_csv = st.columns([1, 1, 1])
             
-            # 2. CSV Generation
-            csv_data = "Follicle_ID,Diameter_mm,Clinical_Status\n"
-            for i, size in enumerate(sizes_list):
-                status = "Mature" if size >= 18.0 else "Immature/Growing"
-                csv_data += f"{i+1},{size},{status}\n"
+            with col_save:
+                if st.button("💾 Save to EHR Database", use_container_width=True):
+                    add_patient_record(patient_id_input, st.session_state['username'], total_count, mature_count, clinical_status)
+                    st.success("Record saved successfully!")
 
-            col_pdf, col_csv = st.columns([1, 1])
             with col_pdf:
+                def create_pdf():
+                    pdf = FPDF()
+                    pdf.add_page()
+                    pdf.set_font("Arial", 'B', 16)
+                    pdf.cell(200, 10, txt="AFCA - Automated Clinical Ultrasound Report", ln=True, align='C')
+                    pdf.line(10, 20, 200, 20)
+                    pdf.ln(10)
+                    pdf.set_font("Arial", size=12)
+                    pdf.cell(200, 8, txt=f"Attending Physician: Dr. {st.session_state['username']}", ln=True)
+                    pdf.cell(200, 8, txt=f"Patient ID: {patient_id_input}", ln=True)
+                    pdf.cell(200, 8, txt="Scan Type: Transvaginal Pelvic Ultrasound", ln=True)
+                    pdf.ln(10)
+                    pdf.set_font("Arial", 'B', 14)
+                    pdf.cell(200, 10, txt="AI Biometry Results:", ln=True)
+                    pdf.set_font("Arial", size=12)
+                    pdf.cell(200, 8, txt=f"Total Fluid Pockets Detected: {total_count}", ln=True)
+                    pdf.cell(200, 8, txt=f"Mature Follicles (Ready for Trigger): {mature_count}", ln=True)
+                    pdf.ln(5)
+                    pdf.cell(200, 8, txt="Measurements (Largest to Smallest):", ln=True)
+                    for i, size in enumerate(sizes_list):
+                        status = "MATURE" if size >= 18.0 else "Growing"
+                        pdf.cell(200, 8, txt=f"  - Follicle {i+1}: {size} mm [{status}]", ln=True)
+                    temp_pdf_path = tempfile.mktemp(suffix=".pdf")
+                    pdf.output(temp_pdf_path)
+                    return temp_pdf_path
+
+                pdf_file_path = create_pdf()
                 with open(pdf_file_path, "rb") as pdf_file:
-                    st.download_button("📥 Download PDF Report", data=pdf_file, file_name="AFCA_Report.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button("📥 Download PDF", data=pdf_file, file_name=f"{patient_id_input}_Report.pdf", mime="application/pdf", use_container_width=True)
+            
             with col_csv:
-                st.download_button("📊 Export Raw Data (CSV)", data=csv_data, file_name="AFCA_Biometry.csv", mime="text/csv", use_container_width=True)
+                csv_data = "Follicle_ID,Diameter_mm,Clinical_Status\n"
+                for i, size in enumerate(sizes_list):
+                    status = "Mature" if size >= 18.0 else "Immature/Growing"
+                    csv_data += f"{i+1},{size},{status}\n"
+                st.download_button("📊 Export CSV", data=csv_data, file_name=f"{patient_id_input}_Data.csv", mime="text/csv", use_container_width=True)
 
+    # --- TAB 2: PATIENT DATABASE ---
     with tab2:
-        st.subheader("Patient Records Directory")
-        st.info("The EHR database is currently locked. Please contact the hospital IT administrator to authorize access to historical patient records.")
-        # This gives the illusion of a massive backend system!
+        st.subheader("Electronic Health Records (EHR) Directory")
+        st.write("Secure historical biometry data logged by the AFCA system.")
+        
+        # Fetch data via Pandas and display it
+        df = get_all_records()
+        if not df.empty:
+            # Use use_container_width to make the table span the whole screen
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # Allow bulk download of the whole database
+            bulk_csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download Full Database (CSV)", data=bulk_csv, file_name="AFCA_Hospital_Database.csv", mime="text/csv")
+        else:
+            st.info("The database is currently empty. Analyze a scan and click 'Save to EHR Database' to populate records.")
 
+    # --- TAB 3: SETTINGS ---
     with tab3:
         st.subheader("System Configuration")
         st.write("**Model Version:** AFCA U-Net v1.0 (ResNet34 Encoder)")
         st.write("**Threshold Calibration:** 18.0mm (ESHRE Global Guidelines)")
         st.write("**Biometry Engine:** OpenCV Spatial Mapping")
+        st.write("**Database:** SQLite3 Local Storage")
 
     # --- ENTERPRISE FOOTER ---
     st.write("---")
-    st.markdown("<p style='text-align: center; color: gray; font-size: 12px;'>© 2026 AFCA Clinical Systems | VISTAS Medical Software Division | Restricted Access</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray; font-size: 12px;'>© 2026 AFCA Clinical Systems | VISTAS Medical Software Division | Restricted Access</p>", unsafe_allow_html=True))
