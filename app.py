@@ -10,6 +10,17 @@ import segmentation_models_pytorch as smp
 from fpdf import FPDF
 import tempfile
 import os
+import urllib.request
+
+# --- Model Download Logic ---
+model_file_name = "afca_unet_model.pth"
+# Paste your copied GitHub Release link inside the quotes below!
+model_url = "PASTE_YOUR_COPIED_LINK_HERE"
+
+if not os.path.exists(model_file_name):
+    with st.spinner("Downloading AI model weights (this only happens once)..."):
+        urllib.request.urlretrieve(model_url, model_file_name)
+        st.success("Model downloaded successfully!")
 
 # --- 1. App Configuration ---
 st.set_page_config(page_title="AFCA AI Dashboard", layout="wide")
