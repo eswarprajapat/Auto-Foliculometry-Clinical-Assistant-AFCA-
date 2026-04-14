@@ -15,7 +15,7 @@ import urllib.request
 # --- Model Download Logic ---
 model_file_name = "afca_unet_model.pth"
 # Paste your copied GitHub Release link inside the quotes below!
-model_url = "PASTE_YOUR_COPIED_LINK_HERE"
+model_url = "sha256:09ccda792c608b59e6feea5021bfc417c8d65ae4d11e339de4e8edd84f2e06cd"
 
 if not os.path.exists(model_file_name):
     with st.spinner("Downloading AI model weights (this only happens once)..."):
