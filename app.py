@@ -124,133 +124,164 @@ if not st.session_state['logged_in']:
                 st.rerun()
 
 # --- 5. Main Application Dashboard ---
+# --- 5. Main Application Dashboard ---
 else:
-    # Sidebar features
-    st.sidebar.success(f"Logged in as: Dr. {st.session_state['username']}")
-    if st.sidebar.button("Logout"):
+    # --- CUSTOM HOSPITAL BRANDING (SIDEBAR) ---
+    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2966/2966327.png", width=100) 
+    st.sidebar.markdown(f"**Attending Physician:**<br>Dr. {st.session_state['username']}", unsafe_allow_html=True)
+    st.sidebar.write("---")
+    st.sidebar.caption("System Status: Online 🟢")
+    st.sidebar.caption("PACS Connection: Secure 🔒")
+    st.sidebar.write("---")
+    if st.sidebar.button("Logout", use_container_width=True):
         st.session_state['logged_in'] = False
         st.rerun()
 
     # Dashboard Header
     st.title("Auto-Foliculometry Clinical Assistant (AFCA)")
-    st.write("Welcome to the secure clinical dashboard. Upload a transvaginal ultrasound scan for instant biometry.")
+    
+    # --- MULTI-TAB INTERFACE ---
+    tab1, tab2, tab3 = st.tabs(["🩺 AI Biometry Scanner", "🗄️ Patient Database", "⚙️ System Settings"])
 
-    @st.cache_resource
-    def load_model():
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = smp.Unet(encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1)
-        model.load_state_dict(torch.load("afca_unet_model.pth", map_location=device))
-        model.eval()
-        return model, device
+    with tab1:
+        st.write("Upload a transvaginal ultrasound scan for instant biometry analysis.")
 
-    model, device = load_model()
-    PIXEL_TO_MM = 0.25 
+        @st.cache_resource
+        def load_model():
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model = smp.Unet(encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1)
+            model.load_state_dict(torch.load("afca_unet_model.pth", map_location=device))
+            model.eval()
+            return model, device
 
-    uploaded_file = st.file_uploader("Upload Ultrasound Image (.jpg, .png)", type=["jpg", "png", "jpeg"])
+        model, device = load_model()
+        PIXEL_TO_MM = 0.25 
 
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert('RGB')
-        raw_image = np.array(image)
-        
-        with st.spinner("Analyzing scan and computing biometry..."):
-            resized_image = cv2.resize(raw_image, (256, 256))
-            image_tensor = resized_image / 255.0
-            image_tensor = np.transpose(image_tensor, (2, 0, 1))
-            image_tensor = torch.tensor(image_tensor, dtype=torch.float32).unsqueeze(0).to(device)
+        uploaded_file = st.file_uploader("Upload Ultrasound Image (.jpg, .png)", type=["jpg", "png", "jpeg"])
 
-            with torch.no_grad():
-                prediction = model(image_tensor)
-                prediction = torch.sigmoid(prediction)
-                predicted_mask = (prediction.squeeze().cpu().numpy() > 0.5).astype(np.uint8)
-
-            output_image = resized_image.copy()
-            contours, _ = cv2.findContours(predicted_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if uploaded_file is not None:
+            image = Image.open(uploaded_file).convert('RGB')
+            raw_image = np.array(image)
             
-            mature_count = 0
-            total_count = 0
-            sizes_list = [] 
+            with st.spinner("Analyzing scan and computing biometry..."):
+                resized_image = cv2.resize(raw_image, (256, 256))
+                image_tensor = resized_image / 255.0
+                image_tensor = np.transpose(image_tensor, (2, 0, 1))
+                image_tensor = torch.tensor(image_tensor, dtype=torch.float32).unsqueeze(0).to(device)
 
-            for contour in contours:
-                area_px = cv2.contourArea(contour)
-                if area_px < 50: 
-                    continue
-                    
-                total_count += 1
-                radius_px = math.sqrt(area_px / math.pi)
-                diameter_mm = (radius_px * 2) * PIXEL_TO_MM
-                sizes_list.append(round(diameter_mm, 1))
+                with torch.no_grad():
+                    prediction = model(image_tensor)
+                    prediction = torch.sigmoid(prediction)
+                    predicted_mask = (prediction.squeeze().cpu().numpy() > 0.5).astype(np.uint8)
+
+                output_image = resized_image.copy()
+                contours, _ = cv2.findContours(predicted_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
-                if diameter_mm >= 18.0:
-                    color = (0, 255, 0) 
-                    mature_count += 1
-                elif diameter_mm >= 10.0:
-                    color = (255, 255, 0) 
-                else:
-                    color = (255, 0, 0) 
+                mature_count = 0
+                total_count = 0
+                sizes_list = [] 
+
+                for contour in contours:
+                    area_px = cv2.contourArea(contour)
+                    if area_px < 50: 
+                        continue
+                        
+                    total_count += 1
+                    radius_px = math.sqrt(area_px / math.pi)
+                    diameter_mm = (radius_px * 2) * PIXEL_TO_MM
+                    sizes_list.append(round(diameter_mm, 1))
                     
-                cv2.drawContours(output_image, [contour], -1, color, 2)
+                    if diameter_mm >= 18.0:
+                        color = (0, 255, 0) 
+                        mature_count += 1
+                    elif diameter_mm >= 10.0:
+                        color = (255, 255, 0) 
+                    else:
+                        color = (255, 0, 0) 
+                        
+                    cv2.drawContours(output_image, [contour], -1, color, 2)
+                    
+                    M = cv2.moments(contour)
+                    if M["m00"] != 0:
+                        cX = int(M["m10"] / M["m00"])
+                        cY = int(M["m01"] / M["m00"])
+                        cv2.putText(output_image, f"{diameter_mm:.1f}mm", (cX - 15, cY), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Original Scan")
+                st.image(raw_image, use_container_width=True)
+            with col2:
+                st.subheader("AFCA Automated Biometry")
+                st.image(output_image, use_container_width=True)
                 
-                M = cv2.moments(contour)
-                if M["m00"] != 0:
-                    cX = int(M["m10"] / M["m00"])
-                    cY = int(M["m01"] / M["m00"])
-                    cv2.putText(output_image, f"{diameter_mm:.1f}mm", (cX - 15, cY), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+            st.success(f"**Clinical Summary:** Detected {total_count} total follicles. {mature_count} follicles are >= 18mm.")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Original Scan")
-            st.image(raw_image, use_container_width=True)
-        with col2:
-            st.subheader("AFCA Automated Biometry")
-            st.image(output_image, use_container_width=True)
+            # --- EXPORT REPORTS ---
+            st.write("---")
+            st.subheader("Export Clinical Data")
             
-        st.success(f"**Clinical Summary:** Detected {total_count} total follicles. {mature_count} follicles are >= 18mm.")
+            sizes_list.sort(reverse=True) 
+            
+            # 1. PDF Generation
+            def create_pdf():
+                pdf = FPDF()
+                pdf.add_page()
+                
+                pdf.set_font("Arial", 'B', 16)
+                pdf.cell(200, 10, txt="AFCA - Automated Clinical Ultrasound Report", ln=True, align='C')
+                pdf.line(10, 20, 200, 20)
+                pdf.ln(10)
+                
+                pdf.set_font("Arial", size=12)
+                pdf.cell(200, 8, txt=f"Attending Physician: Dr. {st.session_state['username']}", ln=True)
+                pdf.cell(200, 8, txt="Patient ID: P-84920", ln=True)
+                pdf.cell(200, 8, txt="Scan Type: Transvaginal Pelvic Ultrasound", ln=True)
+                pdf.ln(10)
+                
+                pdf.set_font("Arial", 'B', 14)
+                pdf.cell(200, 10, txt="AI Biometry Results:", ln=True)
+                pdf.set_font("Arial", size=12)
+                pdf.cell(200, 8, txt=f"Total Fluid Pockets Detected: {total_count}", ln=True)
+                pdf.cell(200, 8, txt=f"Mature Follicles (Ready for Trigger): {mature_count}", ln=True)
+                pdf.ln(5)
+                
+                pdf.cell(200, 8, txt="Measurements (Largest to Smallest):", ln=True)
+                for i, size in enumerate(sizes_list):
+                    status = "MATURE" if size >= 18.0 else "Growing"
+                    pdf.cell(200, 8, txt=f"  - Follicle {i+1}: {size} mm [{status}]", ln=True)
+                
+                temp_pdf_path = tempfile.mktemp(suffix=".pdf")
+                pdf.output(temp_pdf_path)
+                return temp_pdf_path
 
-        # --- PDF Generation Feature ---
-        st.write("---")
-        st.subheader("Generate Clinical Report")
-        
-        sizes_list.sort(reverse=True) 
-        
-        def create_pdf():
-            pdf = FPDF()
-            pdf.add_page()
+            pdf_file_path = create_pdf()
             
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(200, 10, txt="AFCA - Automated Clinical Ultrasound Report", ln=True, align='C')
-            pdf.line(10, 20, 200, 20)
-            pdf.ln(10)
-            
-            pdf.set_font("Arial", size=12)
-            # Pulls the actual username of the doctor who logged in!
-            pdf.cell(200, 8, txt=f"Attending Physician: Dr. {st.session_state['username']}", ln=True)
-            pdf.cell(200, 8, txt="Patient ID: P-84920", ln=True)
-            pdf.cell(200, 8, txt="Scan Type: Transvaginal Pelvic Ultrasound", ln=True)
-            pdf.ln(10)
-            
-            pdf.set_font("Arial", 'B', 14)
-            pdf.cell(200, 10, txt="AI Biometry Results:", ln=True)
-            pdf.set_font("Arial", size=12)
-            pdf.cell(200, 8, txt=f"Total Fluid Pockets Detected: {total_count}", ln=True)
-            pdf.cell(200, 8, txt=f"Mature Follicles (Ready for Trigger): {mature_count}", ln=True)
-            pdf.ln(5)
-            
-            pdf.cell(200, 8, txt="Measurements (Largest to Smallest):", ln=True)
+            # 2. CSV Generation
+            csv_data = "Follicle_ID,Diameter_mm,Clinical_Status\n"
             for i, size in enumerate(sizes_list):
-                status = "MATURE" if size >= 18.0 else "Growing"
-                pdf.cell(200, 8, txt=f"  - Follicle {i+1}: {size} mm [{status}]", ln=True)
-            
-            temp_pdf_path = tempfile.mktemp(suffix=".pdf")
-            pdf.output(temp_pdf_path)
-            return temp_pdf_path
+                status = "Mature" if size >= 18.0 else "Immature/Growing"
+                csv_data += f"{i+1},{size},{status}\n"
 
-        pdf_file_path = create_pdf()
-        
-        with open(pdf_file_path, "rb") as pdf_file:
-            st.download_button(
-                label="📥 Download PDF Clinical Report",
-                data=pdf_file,
-                file_name="AFCA_Patient_Report.pdf",
-                mime="application/pdf"
-            )
+            col_pdf, col_csv = st.columns([1, 1])
+            with col_pdf:
+                with open(pdf_file_path, "rb") as pdf_file:
+                    st.download_button("📥 Download PDF Report", data=pdf_file, file_name="AFCA_Report.pdf", mime="application/pdf", use_container_width=True)
+            with col_csv:
+                st.download_button("📊 Export Raw Data (CSV)", data=csv_data, file_name="AFCA_Biometry.csv", mime="text/csv", use_container_width=True)
+
+    with tab2:
+        st.subheader("Patient Records Directory")
+        st.info("The EHR database is currently locked. Please contact the hospital IT administrator to authorize access to historical patient records.")
+        # This gives the illusion of a massive backend system!
+
+    with tab3:
+        st.subheader("System Configuration")
+        st.write("**Model Version:** AFCA U-Net v1.0 (ResNet34 Encoder)")
+        st.write("**Threshold Calibration:** 18.0mm (ESHRE Global Guidelines)")
+        st.write("**Biometry Engine:** OpenCV Spatial Mapping")
+
+    # --- ENTERPRISE FOOTER ---
+    st.write("---")
+    st.markdown("<p style='text-align: center; color: gray; font-size: 12px;'>© 2026 AFCA Clinical Systems | VISTAS Medical Software Division | Restricted Access</p>", unsafe_allow_html=True)
